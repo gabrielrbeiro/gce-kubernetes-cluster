@@ -1,0 +1,180 @@
+---
+- name: Kubernetes Cluster setup
+  hosts: all
+  become: yes
+
+  vars:
+    containerd_url: https://github.com/containerd/containerd/releases/download/v1.5.7/containerd-1.5.7-linux-amd64.tar.gz
+    cni_manifest: https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+    advertise_address_cmd: "$(/sbin/ifconfig ens4 | grep 'inet' | cut -d: -f2 | awk '{print $2}')"
+    pod_cidr: 172.16.0.0/20
+    cri_socket: /run/containerd/containerd.sock
+
+  tasks:
+  - name: Create Kubernetes group
+    ansible.builtin.group:
+      name: kubernetes
+      state: present
+
+  - name: Create Kubernetes user
+    ansible.builtin.user:
+      name: kubernetes
+      state: present
+      shell: /bin/false
+      group: kubernetes
+
+  - name: Enable kernel modules
+    ansible.builtin.shell:
+      cmd: modprobe br_netfilter ip_vs ip_vs_rr ip_vs_sh ip_vs_wrr overlay nf_conntrack
+
+  - name: Update system
+    ansible.builtin.apt:
+      update_cache: yes
+      upgrade: dist
+
+  - name: Install required packages
+    ansible.builtin.apt:
+      name: "{{ item }}"
+      state: present
+    loop:
+      - apt-transport-https
+      - gnupg2
+      - runc
+
+  - name: Download containerd
+    ansible.builtin.get_url:
+      url: "{{ containerd_url }}"
+      dest: /opt/containerd.tar.gz
+
+  - name: Extract containerd
+    ansible.builtin.unarchive:
+      src: /opt/containerd.tar.gz
+      dest: /opt
+      remote_src: yes
+
+  - name: Move containerd binaries to path
+    ansible.builtin.copy:
+      src: "/opt/bin/{{ item }}"
+      dest: "/usr/local/bin/{{ item }}"
+      remote_src: yes
+      mode: '0755'
+    loop:
+      - containerd
+      - containerd-shim
+      - containerd-shim-runc-v1
+      - containerd-shim-runc-v2
+      - ctr
+
+  - name: Cleanup containerd files
+    ansible.builtin.file:
+      path: "{{ item }}"
+      state: absent
+    loop:
+      - /opt/containerd.tar.gz
+      - /opt/bin
+
+  - name: Copy containerd service file
+    ansible.builtin.copy:
+      src: ./containerd.service
+      dest: /usr/lib/systemd/system/containerd.service
+
+  - name: Restart systemctl daemon
+    ansible.builtin.systemd:
+      daemon_reload: yes
+
+  - name: Start containerd
+    ansible.builtin.systemd:
+      state: started
+      name: containerd
+
+  - name: Include GPG key
+    ansible.builtin.shell:
+      cmd: curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+
+  - name: Include Kubernetes repository in source list
+    ansible.builtin.shell:
+      cmd: echo "deb http://apt.kubernetes.io/ kubernetes-xenial main" > /etc/apt/sources.list.d/kubernetes.list
+
+  - name: Install Kubernetes binaries
+    ansible.builtin.apt:
+      name: "{{ item }}"
+      update_cache: yes
+    loop:
+      - kubelet
+      - kubectl
+      - kubeadm
+
+  - name: Create containerd configuration directory
+    ansible.builtin.file:
+      path: /etc/containerd
+      state: directory
+
+  - name: Create containerd configuration file
+    ansible.builtin.copy:
+      src: ./containerd-config.toml
+      dest: /etc/containerd/config.toml
+
+  - name: Enable ip_forward and bridge-nf-call-iptables
+    ansible.builtin.blockinfile:
+      path: /etc/sysctl.conf
+      block: |
+        net.ipv4.ip_forward=1
+        net.bridge.bridge-nf-call-iptables=1
+
+  - name: Apply changes to sysctl
+    ansible.builtin.shell:
+      cmd: sysctl -p
+
+  - name: Ensure that swap is disabled
+    ansible.builtin.shell:
+      cmd: swapoff -a
+
+  - name: Initialize kubeadm in control-plane
+    ansible.builtin.shell:
+      cmd: "kubeadm init --apiserver-advertise-address {{ advertise_address_cmd }} --pod-network-cidr {{ pod_cidr }} --cri-socket {{ cri_socket }}"
+    when: "'master' in group_names"
+
+  - name: Generate join token
+    ansible.builtin.shell:
+      cmd: "kubeadm token create --print-join-command"
+    register: token_creation
+    when: "'master' in group_names"
+
+  - name: Save locally join token
+    local_action:
+      module: ansible.builtin.lineinfile
+      line: "{{ token_creation.stdout }}"
+      path: ./join-token
+      create: yes
+    when: "'master' in group_names"
+    become: false
+
+  - name: Install cni plugin
+    ansible.builtin.shell:
+      cmd: "KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f {{ cni_manifest }}"
+    when: "'master' in group_names"
+
+  - name: Copy join tokens to workers
+    ansible.builtin.copy:
+      src: ./join-token
+      dest: "/opt/join-token"
+      mode: '0755'
+    when: "'worker' in group_names"
+
+  - name: Apply join tokens
+    ansible.builtin.shell: cat /opt/join-token | while read in; do sh -c "$in"; done
+    when: "'worker' in group_names"
+
+  - name: Clean remote join tokens
+    ansible.builtin.file:
+      path: /opt/join-token
+      state: absent
+    when: "'worker' in group_names"
+
+  - name: Clean local join tokens
+    local_action:
+      module: ansible.builtin.file
+      path: ./join-token
+      state: absent
+    when: "'master' in group_names"
+    become: false

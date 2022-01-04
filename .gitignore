@@ -1,0 +1,9 @@
+.inventory
+.terraform
+
+*.tfstate
+*.backup
+*.lock.hcl
+
+ansible.cfg
+cloud-sa.json
