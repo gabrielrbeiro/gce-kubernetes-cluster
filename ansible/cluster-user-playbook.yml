@@ -1,0 +1,37 @@
+---
+- name: Sign User Certificate
+  hosts: master
+  become: yes
+
+  tasks:
+  - name: Copy certificate signing request to master node
+    ansible.builtin.copy:
+      src: "{{ base }}/.tmp/{{ user }}.csr"
+      dest: /root/{{ user }}.csr
+
+  - name: Sign request with cluster certificate authority
+    ansible.builtin.shell: >
+      openssl x509 -req -in /root/{{ user }}.csr
+      -CA /etc/kubernetes/pki/ca.crt
+      -CAkey /etc/kubernetes/pki/ca.key
+      -CAcreateserial -out /root/{{ user }}.crt -days 365
+
+  - name: Download signed certificate
+    ansible.builtin.fetch:
+      src: "/root/{{ user }}.crt"
+      dest: "{{ base }}/.tmp/{{ user }}.crt"
+      flat: yes
+
+  - name: Download cluster ca certificate
+    ansible.builtin.fetch:
+      src: /etc/kubernetes/pki/ca.crt
+      dest: "{{ base }}/.tmp/ca.crt"
+      flat: yes
+
+  - name: Clear remote files
+    ansible.builtin.file:
+      path: "{{ item }}"
+      state: absent
+    loop:
+      - "/root/{{ user }}.crt"
+      - "/root/{{ user }}.csr"

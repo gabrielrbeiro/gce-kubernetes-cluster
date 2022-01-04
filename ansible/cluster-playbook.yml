@@ -41,6 +41,24 @@
       - gnupg2
       - runc
 
+  - name: Install nginx for health check
+    ansible.builtin.apt:
+      name: nginx
+      state: present
+    when: "'master' in group_names"
+
+  - name: Copy nginx conf to sites-enabled
+    ansible.builtin.copy:
+      src: nginx.conf
+      dest: /etc/nginx/sites-enabled/kubernetes.default.svc.cluster.local
+    when: "'master' in group_names"
+
+  - name: Restart nginx
+    ansible.builtin.systemd:
+      state: restarted
+      name: nginx
+    when: "'master' in group_names"
+
   - name: Download containerd
     ansible.builtin.get_url:
       url: "{{ containerd_url }}"
@@ -131,7 +149,13 @@
 
   - name: Initialize kubeadm in control-plane
     ansible.builtin.shell:
-      cmd: "kubeadm init --apiserver-advertise-address {{ advertise_address_cmd }} --pod-network-cidr {{ pod_cidr }} --cri-socket {{ cri_socket }}"
+      cmd: >
+        kubeadm init
+        --apiserver-advertise-address {{ advertise_address_cmd }}
+        --pod-network-cidr {{ pod_cidr }}
+        --cri-socket {{ cri_socket }}
+        --apiserver-cert-extra-sans {{ external_dns_name }}
+
     when: "'master' in group_names"
 
   - name: Generate join token

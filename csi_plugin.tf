@@ -34,5 +34,5 @@ resource "google_service_account_key" "json_key" {
 
 resource "local_file" "csi_json_key" {
   content  = base64decode(google_service_account_key.json_key.private_key)
-  filename = "${path.module}/cloud-sa.json"
+  filename = "${path.cwd}/cloud-sa.json"
 }
