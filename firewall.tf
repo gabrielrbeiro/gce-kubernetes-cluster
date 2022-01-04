@@ -39,3 +39,16 @@ resource "google_compute_firewall" "allow_anywhere_ssh" {
   source_ranges = ["0.0.0.0/0"]
   target_tags   = ["${var.deploy_id}-node"]
 }
+
+resource "google_compute_firewall" "allow_kube_api_access" {
+  name    = "${var.deploy_id}-fwr-allow-kubeapi-access"
+  network = var.network_id
+
+  allow {
+    ports    = ["6443", "80"]
+    protocol = "tcp"
+  }
+
+  source_ranges = ["0.0.0.0/0"]
+  target_tags   = ["${var.deploy_id}-master"]
+}

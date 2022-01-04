@@ -66,3 +66,26 @@ variable "network_id" {
   type        = string
   description = "Network ID (for firewall rules)"
 }
+
+variable "control_plane_endpoint" {
+  type        = string
+  default     = ""
+  description = "A valid control plane endpoint (eg. my-cluster.k8s.example.org)"
+}
+
+variable "allow_external_control_plane_access" {
+  type        = bool
+  default     = false
+  description = "Should allow (and setup) external access for Kubernetes cluster"
+}
+
+variable "region" {
+  type        = string
+  description = "Region where cluster will be deployed"
+}
+
+variable "cluster_user" {
+  type        = string
+  default     = "cluster_admin"
+  description = "Name of admin cluster user"
+}

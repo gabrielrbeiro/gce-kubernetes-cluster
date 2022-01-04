@@ -71,7 +71,7 @@ resource "null_resource" "ensure_private_key_permissions" {
 
 resource "null_resource" "run_ansible_playbook" {
   provisioner "local-exec" {
-    command     = "ansible-playbook ${path.module}/ansible/cluster-playbook.yml"
+    command     = "ansible-playbook ${path.module}/ansible/cluster-playbook.yml -e \"external_dns_name=${var.control_plane_endpoint}\""
     working_dir = path.cwd
     environment = {
       "ANSIBLE_HOST_KEY_CHECKING" = "False"
@@ -88,10 +88,47 @@ resource "null_resource" "run_ansible_playbook" {
   ]
 }
 
+resource "time_sleep" "safety_timer" {
+  depends_on      = [null_resource.run_ansible_playbook]
+  create_duration = "10s"
+}
+
+resource "null_resource" "run_user_creation" {
+  provisioner "local-exec" {
+    command     = "${path.module}/scripts/create-user-certificate.sh ${var.cluster_user} system:masters"
+    working_dir = path.cwd
+  }
+
+  depends_on = [
+    time_sleep.safety_timer
+  ]
+}
+
+data "local_file" "credentials" {
+  filename = "${path.cwd}/.user-credentials"
+
+  depends_on = [
+    null_resource.run_user_creation
+  ]
+}
+
 output "worker_public_ip" {
   value = { for i in google_compute_instance.worker : i.name => i.network_interface[0].access_config[0].nat_ip }
 }
 
 output "master_public_ip" {
   value = { for i in google_compute_instance.worker : i.name => i.network_interface[0].access_config[0].nat_ip }
+}
+
+output "cluster_ca" {
+  value = split(":", data.local_file.credentials.content)[0]
+}
+
+output "user_certificate" {
+  value = split(":", data.local_file.credentials.content)[1]
+}
+
+output "user_key" {
+  value = split(":", data.local_file.credentials.content)[2]
+  sensitive = true
 }
